@@ -127,9 +127,10 @@ function extractRendererComments(items) {
     .filter((comment) => comment.text);
 }
 
-function extractViewModelComments(data) {
+function collectViewModelComments(data) {
   const mutations = data.frameworkUpdates?.entityBatchUpdate?.mutations || [];
   const authorsByKey = new Map();
+  const commentsByKey = new Map();
 
   for (const mutation of mutations) {
     const author = mutation.payload?.authorEntityPayload;
@@ -138,10 +139,13 @@ function extractViewModelComments(data) {
     }
   }
 
-  return mutations
-    .map((mutation) => mutation.payload?.commentEntityPayload)
-    .filter(Boolean)
-    .map((payload) => ({
+  for (const mutation of mutations) {
+    const payload = mutation.payload?.commentEntityPayload;
+    if (!payload) {
+      continue;
+    }
+
+    const comment = {
       author:
         payload.author?.displayName ||
         payload.authorName ||
@@ -150,16 +154,56 @@ function extractViewModelComments(data) {
       text: payload.properties?.content?.content || payload.content?.content || '',
       published: payload.properties?.publishedTime || payload.publishedTime || '',
       likes: payload.toolbar?.likeCountLiked || payload.toolbar?.likeCountNotliked || ''
-    }))
-    .filter((comment) => comment.text);
+    };
+
+    if (comment.text) {
+      commentsByKey.set(mutation.entityKey, comment);
+    }
+  }
+
+  return commentsByKey;
+}
+
+function extractCommentEntityKeys(items) {
+  return items
+    .map((item) => {
+      const viewModel =
+        item.commentThreadRenderer?.commentViewModel ||
+        item.commentViewModel ||
+        item.commentViewModelRenderer ||
+        item.commentThreadRenderer?.comment?.commentViewModel;
+
+      return (
+        viewModel?.commentKey ||
+        viewModel?.commentEntityKey ||
+        viewModel?.commentEntityPayloadKey ||
+        viewModel?.comment?.commentEntityKey ||
+        null
+      );
+    })
+    .filter(Boolean);
+}
+
+function extractOrderedViewModelComments(items, commentsByKey) {
+  return extractCommentEntityKeys(items)
+    .map((key) => commentsByKey.get(key))
+    .filter(Boolean);
 }
 
 function extractComments(data) {
   const items = getContinuationItems(data);
   const rendererComments = extractRendererComments(items);
-  const viewModelComments = extractViewModelComments(data);
+  if (rendererComments.length) {
+    return rendererComments;
+  }
 
-  return [...rendererComments, ...viewModelComments];
+  const commentsByKey = collectViewModelComments(data);
+  const orderedViewModelComments = extractOrderedViewModelComments(items, commentsByKey);
+  if (orderedViewModelComments.length) {
+    return orderedViewModelComments;
+  }
+
+  return [...commentsByKey.values()];
 }
 
 function getNextPageToken(data) {
